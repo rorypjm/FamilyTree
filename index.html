@@ -261,6 +261,7 @@ footer{color:var(--muted);font-size:13px;padding:0 0 30px}
       <div class="seg" role="group" aria-label="Tree mode"><button type="button" id="m-whole" aria-pressed="true">Whole tree</button><button type="button" id="m-build" aria-pressed="false">Build out</button></div>
       <div class="seg" role="group" aria-label="What dragging does"><button type="button" id="d-shift" aria-pressed="true">Move branches</button><button type="button" id="d-order" aria-pressed="false">Order siblings</button></div>
       <button type="button" id="t-undo" class="mini" hidden>Undo move</button>
+      <button type="button" id="t-tidy" class="mini" title="Redraws the tree neatly and drops any cards you dragged">Tidy up</button>
       <button type="button" id="t-reset" class="mini" hidden>Reset layout</button>
       <button type="button" id="t-unhide" class="mini" hidden>Show hidden people</button>
       <button type="button" id="t-print" class="mini">Print / save PDF</button>
@@ -310,7 +311,7 @@ const GHOST=[]; /* "not found yet" placeholder cards are no longer drawn; missin
 P.forEach(p=>{p.hx=p.x;});
 /* automatic layout: generations from parent links, then ordering and spacing computed in the browser so new people never need hand placement */
 const LS={get(k,d){try{const v=JSON.parse(localStorage.getItem(k));return v==null?d:v;}catch(e){return d;}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}};
-let SORD=LS.get("fam-ord",{}), MOFF=LS.get("fam-moff",{}), DMODE=LS.get("fam-dmode","shift"), UNDO=[];
+let SORD=LS.get("fam-ord",{}), MOFF=LS.get("fam-moff",{}), DMODE=LS.get("fam-dmode","shift"), UNDO=[], VSIG=LS.get("fam-sig",null);
 if(LS.get("fam-lv",0)<2){ MOFF={}; LS.set("fam-moff",{}); LS.set("fam-lv",2); } /* branch moves saved against the old layout no longer fit the new one */
 const snap=()=>UNDO.push(JSON.stringify({o:SORD,m:MOFF}));
 /* Family tree layout engine. Pure functions, no DOM, so the site and the tests share the exact same code.
@@ -395,12 +396,17 @@ function tidyLayout(o){
   /* separate trees side by side; a tree that only joins another through a cross link sits right beside it */
   let roots=U.filter(u=>!u.parent).sort((a,b)=>hint(a.m[0])-hint(b.m[0])||a.id.localeCompare(b.id));
   const rootOf=u=>{ while(u.parent) u=u.parent; return u; };
-  const anchor=new Map();
-  U.forEach(u=>u.secondary.forEach(s=>{ const sr=rootOf(s), ar=rootOf(u); if(sr!==ar&&!anchor.has(sr)) anchor.set(sr,ar); }));
+  const anchor=new Map(), anchorU=new Map();
+  U.forEach(u=>u.secondary.forEach(s=>{ const sr=rootOf(s), ar=rootOf(u); if(sr!==ar&&!anchor.has(sr)){ anchor.set(sr,ar); anchorU.set(sr,u); } }));
+  /* which half of the anchor's tree the linking person sits in decides which side the other family goes, so the cross line stays short */
+  const dfsList=r=>{ const a=[]; (function f(u){ a.push(u); u.kids.forEach(f); })(r); return a; };
+  const leftSide=r=>{ const a=anchor.get(r), l=dfsList(a), i=l.indexOf(anchorU.get(r)); return l.length>1&&i>=0&&(i/(l.length-1))<0.5&&i<l.length-1; };
   const main=roots.filter(r=>!anchor.has(r)), order=main.slice();
   let guard=0; const pend=roots.filter(r=>anchor.has(r));
   while(pend.length&&guard++<500){ const r=pend.shift(), a=anchor.get(r), i=order.indexOf(a);
-    if(i<0){ pend.push(r); continue; } let j=i+1; while(j<order.length&&anchor.get(order[j])===a) j++; order.splice(j,0,r); }
+    if(i<0){ pend.push(r); continue; }
+    if(leftSide(r)){ let j=i; while(j>0&&anchor.get(order[j-1])===a) j--; order.splice(j,0,r); }
+    else { let j=i+1; while(j<order.length&&anchor.get(order[j])===a) j++; order.splice(j,0,r); } }
   let cursor=0; order.forEach(r=>{ lay(r); place(r,cursor); cursor+=r.bw+GAP; });
   const pos={}; let mn=Infinity; U.forEach(u=>{ if(u.x!=null) mn=Math.min(mn,u.x); });
   if(!isFinite(mn)) mn=0;
@@ -839,6 +845,7 @@ function goTo(id){
   document.getElementById("t-undo").onclick=()=>{ const u=UNDO.pop(); if(!u) return; const v=JSON.parse(u); SORD=v.o; MOFF=v.m; LS.set("fam-ord",SORD); LS.set("fam-moff",MOFF); refreshAll(true); };
   document.getElementById("t-unhide").onclick=()=>{ const back=Array.from(HIDEP); HIDEP=new Set(); LS.set("fam-hide",[]); if(MODE==="build"){ back.forEach(i=>{ if(!REV.has(i)) addPath(i); }); LS.set("fam-rev",Array.from(REV)); } refreshAll(true); if(back.length) setTimeout(()=>scrollToId(back[0],true),30); };
   document.getElementById("t-print").onclick=printView;
+  document.getElementById("t-tidy").onclick=()=>{ if(Object.keys(SORD).length||Object.keys(MOFF).length) snap(); SORD={}; MOFF={}; LS.set("fam-ord",{}); LS.set("fam-moff",{}); refreshAll(true); };
   document.getElementById("t-reset").onclick=()=>{ snap(); SORD={}; MOFF={}; FCOLL=new Set(); COLL=new Set(); LS.set("fam-ord",{}); LS.set("fam-moff",{}); LS.set("fam-fcoll",[]); LS.set("fam-coll",[]); calcHid(); refreshAll(true); };
   document.getElementById("d-shift").onclick=()=>{ DMODE="shift"; LS.set("fam-dmode",DMODE); refreshAll(true); };
   document.getElementById("d-order").onclick=()=>{ DMODE="order"; LS.set("fam-dmode",DMODE); refreshAll(true); };
@@ -1038,10 +1045,13 @@ function buildPrintSheet(){
   const c=svg.cloneNode(true); c.querySelectorAll(".hnd,.rtag").forEach(n=>n.remove()); c.querySelectorAll(".dim,.sel,.pulse,.lift").forEach(n=>n.classList.remove("dim","sel","pulse","lift"));
   c.querySelectorAll(".edge-g").forEach(n=>n.classList.remove("hot","cool")); c.removeAttribute("width"); c.removeAttribute("height");
   const vp=P.filter(tvis), fams=FKEYS.filter(k=>vp.some(p=>p.h.includes(k)));
-  const what=MODE==="build"?("Built out from "+fullName(BYID[START])):(vp.length===P.length?"Whole tree":"Selected view");
+  const notes=[]; if(ST==="living") notes.push("living people only"); if(ST==="dead") notes.push("people in loving memory only");
+  if(ON.size!==FKEYS.length){ const off=FKEYS.filter(k=>!ON.has(k)); notes.push(off.length<=4?("families switched off: "+off.map(k=>LABEL[k]).join(", ")):("only these families on: "+FKEYS.filter(k=>ON.has(k)).map(k=>LABEL[k]).join(", "))); }
+  if(HIDEP.size) notes.push(HIDEP.size+(HIDEP.size===1?" person":" people")+" hidden"); if(MODE==="whole"&&(FCOLL.size||COLL.size)) notes.push("some branches folded away");
+  const what=MODE==="build"?("Built out from "+fullName(BYID[START])):(vp.length===P.length&&!notes.length?"Whole tree":"Selected view");
   const sheet=document.createElement("div"); sheet.id="printsheet";
-  sheet.innerHTML='<div class="phead"><div><h1>Our Family</h1><p>'+esc(what)+' \u00b7 '+vp.length+' people</p></div><div class="pkey">'+fams.map(k=>'<span><i style="background:'+COL[k]+'"></i>'+esc(LABEL[k])+'</span>').join("")+'</div></div>';
-  sheet.appendChild(c); const foot=document.createElement("p"); foot.className="pfoot"; foot.textContent="Printed "+new Date().toLocaleDateString("en-ZA",{day:"numeric",month:"long",year:"numeric"})+". Dashed cards are not yet confirmed. Green dot: backed by a document. Amber dot: family knowledge."; sheet.appendChild(foot);
+  sheet.innerHTML='<div class="phead"><div><h1>Our Family</h1><p>'+esc(what)+' \u00b7 '+vp.length+' of '+P.length+' people'+(notes.length?'. Filtered: '+esc(notes.join("; ")):'')+'</p></div><div class="pkey">'+fams.map(k=>'<span><i style="background:'+COL[k]+'"></i>'+esc(LABEL[k])+'</span>').join("")+'</div></div>';
+  sheet.appendChild(c); const foot=document.createElement("p"); foot.className="pfoot"; foot.textContent=(notes.length?("This view is filtered ("+notes.join("; ")+"), so some relatives are not shown. "):"")+(MODE==="build"?"Only the people built out are shown. ":"")+"Printed "+new Date().toLocaleDateString("en-ZA",{day:"numeric",month:"long",year:"numeric"})+". Dashed cards are not yet confirmed. Green dot: backed by a document. Amber dot: family knowledge."; sheet.appendChild(foot);
   const w=svgW, h=svgH, land=w>=h*0.9, big=w>2600||h>2600, size=(big?"A3":"A4")+(land?" landscape":" portrait");
   const st=document.createElement("style"); st.id="printstyle"; st.textContent="@page{size:"+size+";margin:10mm}"; document.head.appendChild(st);
   document.body.appendChild(sheet); return sheet;
@@ -1050,6 +1060,8 @@ function printView(){ if(!buildPrintSheet()) return; window.print(); }
 window.addEventListener("afterprint",()=>{ const a=document.getElementById("printsheet"); if(a) a.remove(); const b=document.getElementById("printstyle"); if(b) b.remove(); });
 function refreshAll(keep){ const st0=document.getElementById("stage"), sl0=st0.scrollLeft, stp0=st0.scrollTop;
   if(selected&&!visId(selected)){ closeP(); }
+  /* the tree redraws itself on every change: whenever the set of people on show changes (build out, fold, filter, hide), hand-dragged moves are dropped so the layout can never pile up into a mess */
+  { const sig=P.filter(tvis).map(q=>q.id).sort().join(","); if(sig!==VSIG){ if(Object.keys(MOFF).length){ MOFF={}; LS.set("fam-moff",{}); } UNDO=[]; VSIG=sig; LS.set("fam-sig",sig); } }
   if(!(DATA.meta&&DATA.meta.auto_layout===false)){ autoLayout(tvId); applyOff(); syncX(); }
   drawTree(); drawPeople(); drawTimeline(); applyDim(); if(HAS_ST&&!document.getElementById('v-stories').hidden) drawStories((location.hash.indexOf('#story/')===0)?location.hash.slice(7):'');
   const n=P.filter(vis).length; document.getElementById("ffcount").textContent=n===P.length?(P.length+" people"):("Showing "+n+" of "+P.length+" people");
@@ -1058,7 +1070,7 @@ function refreshAll(keep){ const st0=document.getElementById("stage"), sl0=st0.s
   document.getElementById("ffall").hidden=ON.size===FKEYS.length&&ST==="all";
   const vs=P.filter(tvis), st=document.getElementById("stage");
   document.getElementById("m-whole").setAttribute("aria-pressed",MODE==="whole"); document.getElementById("m-build").setAttribute("aria-pressed",MODE==="build"); document.getElementById("t-undo").hidden=!UNDO.length; { const u=document.getElementById("t-unhide"); u.hidden=!HIDEP.size; u.textContent="Show "+HIDEP.size+" hidden "+(HIDEP.size===1?"person":"people"); } document.getElementById("t-reset").hidden=!(Object.keys(SORD).length||Object.keys(MOFF).length||FCOLL.size||COLL.size); document.getElementById("d-shift").setAttribute("aria-pressed",DMODE==="shift"); document.getElementById("d-order").setAttribute("aria-pressed",DMODE==="order");
-  document.getElementById("thint").textContent=MODE==="build"?("Building out from "+fullName(BYID[START])+". Tap the + circles around a card to bring in parents, partners, children and brothers and sisters. Tap a − to tuck them away again."):(DMODE==="shift"?"Drag a card sideways to move that person and their whole branch. It snaps into place and neighbours shuffle aside to make room. ":"Drag a card to put brothers and sisters in a different order. ")+"On a phone, press and hold first. Tap the \u2212 under a person to fold their branch away, or switch whole families off above. Your layout is saved on this device only.";
+  document.getElementById("thint").textContent=MODE==="build"?("Building out from "+fullName(BYID[START])+". Tap the + circles around a card to bring in parents, partners, children and brothers and sisters. Tap a − to tuck them away again."):(DMODE==="shift"?"The tree redraws itself neatly every time you add, fold or filter people. You can still drag a card sideways to move that person and their branch; your drags last until the next change. ":"Drag a card to put brothers and sisters in a different order. ")+"On a phone, press and hold first. Tap the \u2212 under a person to fold their branch away, or switch whole families off above. If the tree ever looks untidy, press Tidy up.";
   if(keep){ st.scrollLeft=sl0; st.scrollTop=stp0; } else if(vs.length&&MODE==="whole"&&ON.size!==FKEYS.length){ st.scrollLeft=Math.max(0,(px(Math.min.apply(null,vs.map(p=>p.x)))-30)*scale); st.scrollTop=Math.max(0,(py(Math.min.apply(null,vs.map(p=>p.r)))-50)*scale); }
 }
 (function(){
