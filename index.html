@@ -855,7 +855,9 @@ function photosHTML(id){
 }
 function openPhoto(pid){ const x=(DATA.photos||[]).find(q=>q.id===pid); if(!x) return; const lb=document.getElementById("lb"); lb.innerHTML='<img alt="'+esc(x.title)+'" src="'+(x.full||x.src)+'"><p>'+esc(x.title)+'</p><button type="button" class="lbx" aria-label="Close photo">\u00d7</button>'; lb.hidden=false; lb.onclick=()=>{ lb.hidden=true; }; }
 function lifeStory(id){
-  const ev=DATA.events.filter(e=>e.people.includes(id)), deadSet=new Set(P.filter(q=>q.dead).map(q=>q.id));
+  /* children's births also appear in a parent's life story, worded from the parent's side */
+  const kidEv=(KIDS[id]||[]).map(c=>BYID[c]).filter(c=>c).map(c=>({date:c.born||"",type:"birth",color:(c.h||[])[0],title:(c.sex==="M"?"Son ":c.sex==="F"?"Daughter ":"Child ")+fullName(c)+" is born",place:c.bp||"",people:[c.id]}));
+  const ev=DATA.events.filter(e=>e.people.includes(id)).concat(kidEv), deadSet=new Set(P.filter(q=>q.dead).map(q=>q.id));
   if(!ev.length) return "";
   const dated=ev.filter(e=>e.date).sort((a,b)=>a.date.localeCompare(b.date)), und=ev.filter(e=>!e.date);
   const row=e=>{ const yo=e.type==="birth"&&hideDates&&e.people.some(x=>!deadSet.has(x)); return '<li style="--c:'+(COL[e.color]||"#8d9bb3")+'"><div class="ly">'+(e.date?esc(fmt(e.date,yo)):"Date to be confirmed")+'</div><div class="lt">'+esc(e.title)+(e.place?'<span>'+esc(e.place)+'</span>':'')+'</div></li>'; };
