@@ -730,7 +730,11 @@ function applyDim(){
     g.appendChild(rc); g.appendChild(t); c.appendChild(g);
   });
 }
-function setScale(v){ scale=Math.max(.4,Math.min(1.6,v)); const svg=document.getElementById("svg"); svg.setAttribute("width",svgW*scale); svg.setAttribute("height",svgH*scale); }
+function setScale(v,ax,ay){ const st=document.getElementById("stage"), old=scale; const nv=Math.max(.4,Math.min(1.6,v)); if(nv===old) return;
+  if(ax==null) ax=st.clientWidth/2; if(ay==null) ay=st.clientHeight/2;
+  const cx=(st.scrollLeft+ax)/old, cy=(st.scrollTop+ay)/old;
+  scale=nv; const svg=document.getElementById("svg"); svg.setAttribute("width",svgW*scale); svg.setAttribute("height",svgH*scale);
+  st.scrollLeft=Math.max(0,cx*scale-ax); st.scrollTop=Math.max(0,cy*scale-ay); }
 function fit(){ const st=document.getElementById("stage"); setScale(Math.max(.4,Math.min(1,(st.clientWidth-8)/svgW))); st.scrollLeft=0; st.scrollTop=0; }
 function startView(){
   const st=document.getElementById("stage");
@@ -741,6 +745,7 @@ function startView(){
 document.getElementById("zi").onclick=()=>setScale(scale*1.2);
 document.getElementById("zo").onclick=()=>setScale(scale/1.2);
 document.getElementById("zf").onclick=fit;
+document.getElementById("stage").addEventListener("wheel",function(e){ if(!e.ctrlKey) return; e.preventDefault(); const r=this.getBoundingClientRect(); setScale(scale*Math.exp(-e.deltaY*0.01),e.clientX-r.left,e.clientY-r.top); },{passive:false});
 
 /* stage interaction: drag background to pan, drag a card sideways to reorder brothers and sisters, tap to open */
 (function(){
