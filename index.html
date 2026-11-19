@@ -376,18 +376,20 @@ function tidyLayout(o){
   const famKey=c=>(par[c]||[]).slice().sort().join("|");
   const via=u=>u.m.find(i=>(par[i]||[]).some(q=>u.parent&&uOf[q]===u.parent));
   function sibPos(c){ const l=SORD[famKey(c)]; const i=l?l.indexOf(c):-1; return i<0?1e6:i; }
-  U.forEach(u=>{
+  const sortKids=u=>{
     if(u.kids.length<2) return;
     const key=c=>{ const v=via(c), ps=(par[v]||[]).filter(q=>uOf[q]===u).map(q=>u.m.indexOf(q)); return {lo:Math.min.apply(null,ps),hi:Math.max.apply(null,ps),fk:famKey(v),sp:sibPos(v),h:hint(v),y:yr(v),id:v}; };
     const K=new Map(u.kids.map(c=>[c,key(c)]));
     u.kids.sort((a,b)=>{ const x=K.get(a), y=K.get(b); return x.lo-y.lo||x.hi-y.hi||(x.fk<y.fk?-1:x.fk>y.fk?1:0)||x.sp-y.sp||x.y-y.y||x.h-y.h||(x.id<y.id?-1:1); });
-  });
+  };
+  U.forEach(sortKids);
   /* block layout: a unit's block holds the unit and all branches below it; blocks of different branches never share space */
+  U.forEach(u=>{ if(u.parent){ const v=via(u); u.vi=Math.max(0,u.m.indexOf(v)); } });
   function lay(u){
     u.kids.forEach(lay);
     if(!u.kids.length){ u.bw=u.w; u.rel=0; return; }
     let cur=0; u.kids.forEach(c=>{ c.boff=cur; cur+=c.bw+GAP; }); const end=cur-GAP;
-    const cc=c=>c.boff+c.rel+c.w/2;
+    const cc=c=>c.boff+c.rel+(c.vi||0)*STEP+(c.vi?0:0)+(c.vi==null?c.w/2:0);
     const mid=(cc(u.kids[0])+cc(u.kids[u.kids.length-1]))/2, left=mid-u.w/2;
     const L=Math.min(0,left), Rr=Math.max(end,left+u.w);
     u.kids.forEach(c=>c.boff-=L); u.rel=left-L; u.bw=Rr-L;
@@ -401,12 +403,18 @@ function tidyLayout(o){
   /* which half of the anchor's tree the linking person sits in decides which side the other family goes, so the cross line stays short */
   const dfsList=r=>{ const a=[]; (function f(u){ a.push(u); u.kids.forEach(f); })(r); return a; };
   const leftSide=r=>{ const a=anchor.get(r), l=dfsList(a), i=l.indexOf(anchorU.get(r)); return l.length>1&&i>=0&&(i/(l.length-1))<0.5&&i<l.length-1; };
+  const sideOf=new Map(); anchor.forEach((a,r)=>sideOf.set(r,leftSide(r)));
   const main=roots.filter(r=>!anchor.has(r)), order=main.slice();
   let guard=0; const pend=roots.filter(r=>anchor.has(r));
   while(pend.length&&guard++<500){ const r=pend.shift(), a=anchor.get(r), i=order.indexOf(a);
     if(i<0){ pend.push(r); continue; }
-    if(leftSide(r)){ let j=i; while(j>0&&anchor.get(order[j-1])===a) j--; order.splice(j,0,r); }
+    if(sideOf.get(r)){ let j=i; while(j>0&&anchor.get(order[j-1])===a) j--; order.splice(j,0,r); }
     else { let j=i+1; while(j<order.length&&anchor.get(order[j])===a) j++; order.splice(j,0,r); } }
+  /* a couple whose partner's own parents sit to the left (or right) puts that partner on that side, so the dashed cross line never has to pass over the other partner's family */
+  anchor.forEach((a,sr)=>{ const u=anchorU.get(sr); if(!u||u.m.length<2) return;
+    const mi=u.m.findIndex(i=>(par[i]||[]).some(q=>uOf[q]&&rootOf(uOf[q])===sr)); if(mi<0) return;
+    const wantLeft=sideOf.get(sr); if(mi===0&&!wantLeft&&u.m.length===2||mi===u.m.length-1&&wantLeft&&u.m.length===2||(u.m.length>2&&((mi===0&&!wantLeft)||(mi===u.m.length-1&&wantLeft)))){ u.m.reverse(); u.vi=null; sortKids(u); } });
+  U.forEach(u=>{ if(u.parent){ const v=via(u); u.vi=Math.max(0,u.m.indexOf(v)); } sortKids(u); });
   let cursor=0; order.forEach(r=>{ lay(r); place(r,cursor); cursor+=r.bw+GAP; });
   const pos={}; let mn=Infinity; U.forEach(u=>{ if(u.x!=null) mn=Math.min(mn,u.x); });
   if(!isFinite(mn)) mn=0;
