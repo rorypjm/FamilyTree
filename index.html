@@ -330,18 +330,18 @@ function tidyLayout(o){
   const par={}, kids={};
   links.filter(l=>!l.step&&byId[l.parent]&&byId[l.child]).forEach(l=>{ (par[l.child]=par[l.child]||[]).push(l.parent); (kids[l.parent]=kids[l.parent]||[]).push(l.child); });
   const un=unions.filter(u=>byId[u.a]&&byId[u.b]);
-  /* generation rows come from the whole tree so a row means the same thing in every view */
-  const R={}; ids.forEach(i=>R[i]=0);
-  for(let it=0;it<80;it++){ let ch=false;
-    ids.forEach(i=>(par[i]||[]).forEach(q=>{ if(R[i]<R[q]+1){R[i]=R[q]+1;ch=true;} }));
-    un.forEach(u=>{ const m=Math.max(R[u.a],R[u.b]); if(R[u.a]!==m){R[u.a]=m;ch=true;} if(R[u.b]!==m){R[u.b]=m;ch=true;} });
-    if(!ch)break; }
-  /* a branch that starts on its own (a partner's parents, say) is drawn in the row just above its children, not at the very top */
-  for(let it=0;it<80;it++){ let ch=false;
-    ids.forEach(i=>{ if((par[i]||[]).length||!(kids[i]||[]).length) return; const t=Math.min.apply(null,kids[i].map(c=>R[c]))-1; if(t>R[i]){ R[i]=t; ch=true; } });
-    un.forEach(u=>{ const m=Math.max(R[u.a],R[u.b]); if(R[u.a]!==m){R[u.a]=m;ch=true;} if(R[u.b]!==m){R[u.b]=m;ch=true;} });
-    ids.forEach(i=>(par[i]||[]).forEach(q=>{ if(R[i]<R[q]+1){R[i]=R[q]+1;ch=true;} }));
-    if(!ch)break; }
+  /* generation rows come from the whole tree, so a row means the same thing in every view.
+     A row is a TRUE generation: partners share a row, brothers and sisters share a row, and a child sits exactly one
+     row below their parents. Solved by walking outwards from the anchor person (default: the first person), so a
+     short branch simply starts lower down instead of being stretched to match the longest line. */
+  const R={}, adj={}; ids.forEach(i=>adj[i]=[]);
+  ids.forEach(i=>(par[i]||[]).forEach(q=>{ adj[i].push([q,-1]); adj[q].push([i,1]); }));
+  un.forEach(u=>{ adj[u.a].push([u.b,0]); adj[u.b].push([u.a,0]); });
+  const conflicts=[];
+  const walk=s0=>{ const comp=[s0]; R[s0]=0; for(let h=0;h<comp.length;h++){ const i=comp[h]; adj[i].forEach(e=>{ const j=e[0], g=R[i]+e[1]; if(R[j]===undefined){ R[j]=g; comp.push(j); } else if(R[j]!==g) conflicts.push([i,j]); }); }
+    const lo=Math.min.apply(null,comp.map(i=>R[i])); comp.forEach(i=>R[i]-=lo); return comp; };
+  const startIds=[o.anchor&&byId[o.anchor]?o.anchor:ids[0]].concat(ids);
+  startIds.forEach(i=>{ if(i!==undefined&&R[i]===undefined) walk(i); });
   const vis=new Set(ids.filter(ok));
   /* units: partners (current and former) sit side by side and are treated as one block, equally */
   const uf={}; const f=a=>uf[a]===a?a:(uf[a]=f(uf[a])); ids.forEach(i=>uf[i]=i);
@@ -406,7 +406,7 @@ function tidyLayout(o){
   if(!isFinite(mn)) mn=0;
   U.forEach(u=>u.m.forEach((i,k)=>{ pos[i]={x:u.x-mn+k*STEP,r:R[i],u:u.id,pu:u.parent?u.parent.id:null}; }));
   ids.forEach(i=>{ if(!pos[i]) pos[i]={x:null,r:R[i]}; });
-  return {pos:pos,units:U,roots:order,R:R};
+  return {pos:pos,units:U,roots:order,R:R,conflicts:conflicts};
 }
 
 /* Lines. Each family (a set of parents and their children) gets one bar, drawn in the gap above its children.
@@ -631,7 +631,13 @@ function drawTree(){
   const pos={}; items.forEach(i=>pos[i.id]=i); GHOST.forEach(g=>pos[g.id]=g);
   const VP=P.filter(tvis); const mx=Math.max.apply(null,[0].concat(VP.map(p=>p.x),GHOST.filter(g=>tvId(g.to)).map(g=>g.x))), mr=Math.max.apply(null,[0].concat(VP.map(p=>RC[p.r]!==undefined?RC[p.r]:p.r))); svgW=px(mx)+W+ML; svgH=MT+mr*RH+H+50;
   let s='<svg id="svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 '+svgW+' '+svgH+'" width="'+svgW*scale+'" height="'+svgH*scale+'" role="group" aria-label="Family tree">';
-  const ROWN=["Great-great-grandparents","Great-grandparents","Grandparents","Parents and their siblings","Our generation","Next generation"], rows=MODE==="build"?vr.map(r=>ROWN[r]||""):ROWN.slice(0,mr+1);
+  /* band labels: a band is one true generation. Whole tree: "Generation N" with the birth years found in it. Build out: named from the person you built out from. */
+  const gnames=k=>k===1?"":k===2?"Great-":k===3?"Great-great-":(k-1)+"x great-";
+  const relName=d=>{ const k=Math.abs(d); if(d<0) return k===1?"Parents'":k===2?"Grandparents'":(k===3?"Great-grandparents'":k===4?"Great-great-grandparents'":(k-2)+"x great-grandparents'"); return k===1?"Children's":k===2?"Grandchildren's":(k===3?"Great-grandchildren's":k===4?"Great-great-grandchildren's":(k-2)+"x great-grandchildren's"); };
+  const yrsIn=r=>{ const y=P.filter(q=>tvis(q)&&q.r===r&&q.born).map(q=>parseInt(q.born.slice(0,4),10)).filter(n=>n>0); return y.length?(Math.min.apply(null,y)===Math.max.apply(null,y)?"born "+y[0]:"born "+Math.min.apply(null,y)+"\u2013"+Math.max.apply(null,y)):""; };
+  const sr=BYID[START]?BYID[START].r:0;
+  const bandLab=r=>MODE==="build"?(r===sr?((BYID[START].first||"").split(" ")[0]+"'s generation"):relName(r-sr)+" generation"):("Generation "+(r+1)+(yrsIn(r)?" \u00b7 "+yrsIn(r):""));
+  const rowIds=MODE==="build"?vr:Array.from({length:mr+1},(_,i)=>i), rows=rowIds.map(bandLab);
   rows.forEach((t,r)=>{ s+='<rect class="band" x="0" y="'+(MT+r*RH-18)+'" width="'+svgW+'" height="'+(H+36)+'" rx="0" opacity="'+(r%2?0:1)+'"/>'; });
   rows.forEach((t,r)=>{ s+='<text class="rowlab" x="14" y="'+(MT+r*RH-4)+'">'+t+'</text>'; });
   /* edges: one bar per family, in the gap above its children. Branches own separate lanes, so bars never run into each other; a link to a partner's own parents is dashed and sits above the rest */
